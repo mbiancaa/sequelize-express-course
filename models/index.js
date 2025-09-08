@@ -1,31 +1,72 @@
 const { Sequelize, DataTypes } = require('sequelize');
+const bcrypt = require('bcryptjs');
 
 const sequelize = new Sequelize({
     dialect: 'sqlite',
-    storage: 'db.sqlite'
+    storage: 'new_db.sqlite'
 });
 
 const User = sequelize.define(
     'User',
     {
+        username: {
+            type: DataTypes.STRING,
+            allowNull: false,
+            unique: true,
+            validate: {
+                notEmpty: {
+                    msg: 'Username cannot be empty'
+                }
+            }
+        },
+        password: {
+            type: DataTypes.STRING,
+            allowNull: false,
+            validate: {
+                notEmpty: {
+                    msg: 'Password cannot be empty'
+                }
+            }
+        },
         firstName: {
             type: DataTypes.STRING,
-            allowNull: false
+            allowNull: true
         },
         lastName: {
             type: DataTypes.STRING,
-            allowNull: false
+            allowNull: true
         },
         age: {
-            type: DataTypes.INTEGER
+            type: DataTypes.INTEGER,
+            allowNull: true
         },
         favouriteColor: {
             type: DataTypes.STRING,
-            defaultValue: 'green'
+            allowNull: true
         },
 
+    },
+    {
+        hooks: {
+            beforeCreate: async (user, options) => {
+                if (user.password) {
+                    const salt = await bcrypt.genSalt(10);
+                    user.password = await bcrypt.hash(user.password, salt)
+                }
+            },
+            beforeUpdate: async (user, options) => {
+                if (user.changed('password')) {
+                    const salt = await bcrypt.genSalt(10);
+                    user.password = await bcrypt.hash(user.password, salt);
+                }
+            }
+        }
     }
 );
+
+User.prototype.validPassword = async function (password) {
+    return await bcrypt.compare(password, this.password);
+}
 
 const Contact = sequelize.define('Contact', {
     id: {
