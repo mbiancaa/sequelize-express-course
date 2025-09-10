@@ -2,6 +2,10 @@ const express = require('express');
 const passport = require('passport');
 const jwt = require('jsonwebtoken');
 
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs').promises;
+
 require('dotenv').config();
 require('./config-passport');
 
@@ -11,8 +15,23 @@ app.use(passport.initialize());
 
 const secret = process.env.SECRET || 'no_secret';
 
-const { sequelize, User, Contact } = require('./models');
+const { sequelize, User, Contact, TokenBlacklist } = require('./models');
 const { QueryTypes } = require('sequelize');
+
+const uploadDir = path.join(process.cwd(), 'uploads');
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, uploadDir)
+    },
+    filename: (req, file, cb) => {
+        cb(null, Date.now() + '-' + file.originalname);
+    }
+});
+
+const upload = multer({ storage });
+
+app.use('/uploads', express.static(uploadDir));
+app.use(express.static(process.cwd()));
 
 
 async function testConnection() {
@@ -29,11 +48,46 @@ async function startServer() {
     await sequelize.sync({ force: false })
     console.log("Databse & tables created");
 
+    try {
+        await fs.access(uploadDir);
+        console.log("uploads directory exists.");
+    } catch (e) {
+        await fs.mkdir(uploadDir);
+        console.log("uploads directory created.");
+    }
 
     app.listen(3000, () => {
         console.log("Server running on localhost:3000")
     })
 }
+
+/* --- START Gallery API Endpoints --- */
+app.get('/gallery', async (req, res) => {
+    try {
+        const files = await fs.readdir(uploadDir);
+        res.json(files);
+    } catch (e) {
+        res.status(500).json({ message: "Error on reading files" })
+    }
+});
+
+app.post('/upload', upload.single('picture'), (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ message: "No file uploaded" });
+    }
+    res.json({ message: "File successfully uploaded", file: req.file.filename });
+})
+
+app.delete('/delete/:filename', async (req, res) => {
+    const filePath = path.join(uploadDir, req.params.filename);
+    try {
+        await fs.unlink(filePath);
+        res.json({ message: "File successfully deleted" });
+    } catch (e) {
+        res.status(500).json({ message: "Error on deleting file" })
+    }
+})
+/* --- END Gallery API Endpoints --- */
 
 /* --- START FOR API ENDPOINTS --- */
 
@@ -242,21 +296,51 @@ app.post('/login', async (req, res, next) => {
 
 /* --- Auth Middleware --- */
 const auth = (req, res, next) => {
-    passport.authenticate('jwt', {
-        session: false
-    }, (err, user) => {
-        if (!user || err) {
-            return res.status(401).json({
+    passport.authenticate('jwt', { session: false }, async (err, user) => {
+        try {
+            if (err || !user) {
+                return res.status(401).json({
+                    status: 'error',
+                    code: 401,
+                    message: 'Unauthorized',
+                    data: 'Unauthorized'
+                });
+            }
+
+            const token = req.headers['authorization']?.split(' ')[1];
+            if (!token) {
+                return res.status(401).json({
+                    status: 'error',
+                    code: 401,
+                    message: 'Missing token.',
+                    data: 'Unauthorized'
+                });
+            }
+
+            const blacklisted = await TokenBlacklist.findOne({ where: { token } });
+            if (blacklisted) {
+                return res.status(401).json({
+                    status: 'error',
+                    code: 401,
+                    message: 'Token invalid.',
+                    data: 'Unauthorized'
+                });
+            }
+
+            req.user = user;
+            next();
+        } catch (error) {
+            console.error("Auth middleware error:", error);
+            res.status(500).json({
                 status: 'error',
-                code: 401,
-                message: 'Unauthorized',
-                data: 'Unauthorized'
-            })
+                code: 500,
+                message: 'Internal server error',
+                data: error.message
+            });
         }
-        req.user = user;
-        next();
     })(req, res, next);
-}
+};
+
 
 
 /* --- Protected Route --- */
@@ -271,6 +355,23 @@ app.get('/list', auth, (req, res) => {
     })
 });
 
+/* --- Logout --- */
+app.post('/logout', auth, async (req, res) => {
+    try {
+        const token = req.headers['authorization']?.split(' ')[1];
+        if (!token) {
+            return res.status(400).json({ message: "Missing token" });
+        }
+        await TokenBlacklist.create({ token });
+        res.json({
+            status: 'success',
+            code: 200,
+            message: "Logout successful, token invalidated"
+        });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+})
 
 
 

@@ -64,6 +64,14 @@ const User = sequelize.define(
     }
 );
 
+const TokenBlacklist = sequelize.define("TokenBlacklist", {
+    token: {
+        type: DataTypes.TEXT,
+        allowNull: false,
+        unique: true
+    }
+});
+
 User.prototype.validPassword = async function (password) {
     return await bcrypt.compare(password, this.password);
 }
@@ -132,4 +140,4 @@ Contact.belongsTo(User, {
     as: 'user'
 });
 
-module.exports = { sequelize, User, Contact }
+module.exports = { sequelize, User, Contact, TokenBlacklist }
