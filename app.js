@@ -374,5 +374,8 @@ app.post('/logout', auth, async (req, res) => {
 })
 
 
+if (require.main === module) {
+    startServer();
+}
 
-startServer();
+module.exports = { app, startServer };
